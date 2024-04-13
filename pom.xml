@@ -51,7 +51,6 @@
 			<version>2.3.1</version> <!-- Или более поздняя версия -->
 		</dependency>
 
-
 	</dependencies>
 
 	<build>
