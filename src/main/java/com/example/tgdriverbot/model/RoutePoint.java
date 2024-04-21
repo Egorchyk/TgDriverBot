@@ -1,13 +1,12 @@
-package com.example.tgdriverbot.model;//package com.example.driverbot.model;
+package com.example.tgdriverbot.model;
 
 import jakarta.persistence.*;
+import jakarta.validation.constraints.NotEmpty;
+import jakarta.validation.constraints.NotNull;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
-
-import java.time.LocalDateTime;
-import java.util.Date;
 
 @Entity
 @AllArgsConstructor
@@ -20,10 +19,11 @@ public class RoutePoint {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @NotEmpty
     private String pointName;
+
+    private String address;
 
     @ManyToOne
     private DailyRoute dailyRoute;
-
-    private LocalDateTime date;
 }

@@ -21,9 +21,6 @@ import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 
 import java.time.LocalDateTime;
 import java.util.*;
-import java.util.concurrent.Executor;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 @Component
 public class TelegramBot extends TelegramLongPollingBot {
@@ -44,6 +41,7 @@ public class TelegramBot extends TelegramLongPollingBot {
         listOfCommands.add(new BotCommand("/start", "Старт"));
         listOfCommands.add(new BotCommand("/addroute", "Добавить поездку"));
         listOfCommands.add(new BotCommand("/addpoint", "Добавить точку"));
+        listOfCommands.add(new BotCommand("/editroute", "Редактировать маршрут"));
         listOfCommands.add(new BotCommand("/help", "Помощь по командам"));
 
         try {
@@ -63,12 +61,37 @@ public class TelegramBot extends TelegramLongPollingBot {
         return config.getToken();
     }
 
+    private final Map<Long, String> awaitingResponse = new HashMap<>();
+    RoutePoint routePoint = new RoutePoint();
+
     @Override
     public void onUpdateReceived(Update update) {
         if (update.hasMessage() && update.getMessage().hasText()) {
             String messageText = update.getMessage().getText();
             long chatId = update.getMessage().getChatId();
             String callBack = String.valueOf(update.getCallbackQuery());
+
+            String currentStep = awaitingResponse.get(chatId);
+            if (currentStep != null && !messageText.startsWith("/")) {
+                switch (currentStep) {
+                    case "pointName":
+                        routePoint.setPointName(messageText);
+                        awaitingResponse.put(chatId, "address");
+                        sendMessage(chatId, "Вы добавили имя: " + messageText);
+                        sendMessage(chatId, "Введите адрес маршрута");
+                        break;
+                    case "address":
+                        routePoint.setAddress(messageText);
+                        awaitingResponse.remove(chatId);
+                        sendMessage(chatId, "Вы добавили маршрут: " + messageText);
+                        sendMessage(chatId, "Вы добавили в бд " + routePoint.getPointName() + " " + routePoint.getAddress());
+                        routePointRepository.save(routePoint);
+                        break;
+                }
+            } else if (currentStep != null && messageText.startsWith("/") && routePoint.getPointName() != null) {
+                routePointRepository.save(routePoint);
+                sendMessage(chatId, "вы сохранили в бд без адреса " + routePoint.getPointName());
+            }
 
             switch (messageText) {
 
@@ -81,10 +104,11 @@ public class TelegramBot extends TelegramLongPollingBot {
                     break;
 
                 case "/addpoint":
-                    sendMessage(chatId, "жду");
-                    SendMessage sendMessage = new SendMessage();
+                    addPoint(chatId);
+                    break;
 
-                    sendMessage(chatId, "не жду");
+                case "/editpoint":
+                    editPoint();
                     break;
 
                 case "/enddailyroute":
@@ -124,7 +148,6 @@ public class TelegramBot extends TelegramLongPollingBot {
     private void addRoute(long chatId) {
 
         RoutePoint routePoint = new RoutePoint();
-        routePoint.setDate(LocalDateTime.now());
 
         routePointRepository.save(routePoint);
 
@@ -156,6 +179,14 @@ public class TelegramBot extends TelegramLongPollingBot {
         executeMessage(message);
     }
 
+    private void addPoint(long chatId) {
+        sendMessage(chatId, "Введите имя маршрута:");
+        awaitingResponse.put(chatId, "pointName");
+    }
+
+    private void editPoint() {
+    }
+
     private void sendHelpMessage(long chatId) {
         sendMessage(chatId, "itsWorking");
     }
@@ -172,29 +203,6 @@ public class TelegramBot extends TelegramLongPollingBot {
     private void executeMessage(SendMessage sendMessage) {
         try {
             execute(sendMessage);
-        } catch (TelegramApiException e) {
-            throw new RuntimeException(e);
-        }
-    }
-
-    private void addPoint(long chatId) {
-        SendMessage nameMessage = new SendMessage(String.valueOf(chatId), "Введите имя маршрута:");
-        try {
-            execute(nameMessage);
-        } catch (TelegramApiException e) {
-            throw new RuntimeException(e);
-        }
-    }
-
-    private void savePoint(String name, String location, long chatId) {
-        RouteList route = new RouteList();
-        route.setNameRoute(name);
-        route.setMapLocation(location);
-        routeListRepository.save(route);
-
-        SendMessage confirmationMessage = new SendMessage(String.valueOf(chatId), "Маршрут успешно сохранен.");
-        try {
-            execute(confirmationMessage);
         } catch (TelegramApiException e) {
             throw new RuntimeException(e);
         }
