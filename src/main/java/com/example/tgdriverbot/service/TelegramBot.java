@@ -10,6 +10,8 @@ import org.springframework.stereotype.Component;
 import org.telegram.telegrambots.bots.TelegramLongPollingBot;
 import org.telegram.telegrambots.meta.api.methods.commands.SetMyCommands;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
+import org.telegram.telegrambots.meta.api.methods.updatingmessages.DeleteMessage;
+import org.telegram.telegrambots.meta.api.objects.Message;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.api.objects.commands.BotCommand;
 import org.telegram.telegrambots.meta.api.objects.commands.scope.BotCommandScopeDefault;
@@ -19,7 +21,6 @@ import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKe
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.KeyboardRow;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 
-import java.time.LocalDateTime;
 import java.util.*;
 
 @Component
@@ -40,8 +41,7 @@ public class TelegramBot extends TelegramLongPollingBot {
         List<BotCommand> listOfCommands = new ArrayList<>();
         listOfCommands.add(new BotCommand("/start", "Старт"));
         listOfCommands.add(new BotCommand("/addroute", "Добавить поездку"));
-        listOfCommands.add(new BotCommand("/addpoint", "Добавить точку"));
-        listOfCommands.add(new BotCommand("/editroute", "Редактировать маршрут"));
+        listOfCommands.add(new BotCommand("/points", "Точки"));
         listOfCommands.add(new BotCommand("/help", "Помощь по командам"));
 
         try {
@@ -60,6 +60,8 @@ public class TelegramBot extends TelegramLongPollingBot {
     public String getBotToken() {
         return config.getToken();
     }
+
+    private int lastMessageId = -1;
 
     private final Map<Long, String> awaitingResponse = new HashMap<>();
     RoutePoint routePoint = new RoutePoint();
@@ -86,10 +88,12 @@ public class TelegramBot extends TelegramLongPollingBot {
                         sendMessage(chatId, "Вы добавили маршрут: " + messageText);
                         sendMessage(chatId, "Вы добавили в бд " + routePoint.getPointName() + " " + routePoint.getAddress());
                         routePointRepository.save(routePoint);
+                        routePoint = new RoutePoint();
                         break;
                 }
             } else if (currentStep != null && messageText.startsWith("/") && routePoint.getPointName() != null) {
                 routePointRepository.save(routePoint);
+                routePoint = new RoutePoint();
                 sendMessage(chatId, "вы сохранили в бд без адреса " + routePoint.getPointName());
             }
 
@@ -103,12 +107,8 @@ public class TelegramBot extends TelegramLongPollingBot {
                     addRoute(chatId);
                     break;
 
-                case "/addpoint":
-                    addPoint(chatId);
-                    break;
-
-                case "/editpoint":
-                    editPoint();
+                case "/points":
+                    getPoints(chatId);
                     break;
 
                 case "/enddailyroute":
@@ -129,10 +129,11 @@ public class TelegramBot extends TelegramLongPollingBot {
             long chatId = update.getCallbackQuery().getMessage().getChatId(); // Получаем chatId из callback запроса
 
             switch (callback) {
-                case "odin":
-                    sendMessage(chatId, "eto odin");
+                case "addNewPoint":
+                    addPoint(chatId);
+                    deleteMessage(chatId);
                     break;
-                case "dva":
+                case "snowRoute":
                     sendMessage(chatId, "this is dva");
                     break;
                 case "tri":
@@ -184,7 +185,29 @@ public class TelegramBot extends TelegramLongPollingBot {
         awaitingResponse.put(chatId, "pointName");
     }
 
-    private void editPoint() {
+    private void getPoints(Long chatId) {
+        List<RoutePoint> routePoints = routePointRepository.findAll();
+
+        List<String> textList = new ArrayList<>();
+        List<String> callBackDataList = new ArrayList<>();
+
+        for (RoutePoint point : routePoints) {
+            textList.add(point.getPointName());
+            callBackDataList.add("snowRoute_" + point.getId());
+        }
+
+        List<List<InlineKeyboardButton>> rows = buildInlineKeyboard(textList, callBackDataList, 2);
+        InlineKeyboardMarkup inlineKeyboardMarkup = new InlineKeyboardMarkup();
+
+        rows.add(addButton("Добавить новую точку", "addNewPoint"));
+
+        inlineKeyboardMarkup.setKeyboard(rows);
+
+        SendMessage sendMessage = new SendMessage(String.valueOf(chatId), "Список точек");
+        sendMessage.setReplyMarkup(inlineKeyboardMarkup);
+
+        executeMessage(sendMessage);
+
     }
 
     private void sendHelpMessage(long chatId) {
@@ -200,11 +223,48 @@ public class TelegramBot extends TelegramLongPollingBot {
         }
     }
 
-    private void executeMessage(SendMessage sendMessage) {
+    private void deleteMessage(long chatId) {
+        DeleteMessage deleteMessage = new DeleteMessage(String.valueOf(chatId), lastMessageId);
         try {
-            execute(sendMessage);
+            execute(deleteMessage);
         } catch (TelegramApiException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    private void executeMessage(SendMessage sendMessage) {
+        try {
+            Message sentMessage = execute(sendMessage);
+            lastMessageId = sentMessage.getMessageId();
+        } catch (TelegramApiException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    public List<List<InlineKeyboardButton>> buildInlineKeyboard(List<String> buttonTexts, List<String> callbackData, int buttonsPerRow) {
+        List<List<InlineKeyboardButton>> rows = new ArrayList<>();
+
+        for (int i = 0; i < buttonTexts.size(); i += buttonsPerRow) {
+            List<InlineKeyboardButton> row = new ArrayList<>();
+            for (int j = i; j < i + buttonsPerRow && j < buttonTexts.size(); j++) {
+                String buttonText = buttonTexts.get(j);
+                String callback = callbackData.get(j);
+                InlineKeyboardButton button = new InlineKeyboardButton();
+                button.setText(buttonText);
+                button.setCallbackData(callback);
+                row.add(button);
+            }
+            rows.add(row);
+        }
+        return rows;
+    }
+
+    private List<InlineKeyboardButton> addButton(String text, String callBackData) {
+        List<InlineKeyboardButton> addRow = new ArrayList<>();
+        InlineKeyboardButton addButton = new InlineKeyboardButton();
+        addButton.setText(text);
+        addButton.setCallbackData(callBackData);
+        addRow.add(addButton);
+        return addRow;
     }
 }
