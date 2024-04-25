@@ -1,7 +1,6 @@
 package com.example.tgdriverbot.service;
 
 import com.example.tgdriverbot.config.BotConfig;
-import com.example.tgdriverbot.model.RouteList;
 import com.example.tgdriverbot.model.RoutePoint;
 import com.example.tgdriverbot.repository.DailyRouteRepository;
 import com.example.tgdriverbot.repository.RouteListRepository;
@@ -16,9 +15,7 @@ import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.api.objects.commands.BotCommand;
 import org.telegram.telegrambots.meta.api.objects.commands.scope.BotCommandScopeDefault;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
-import org.telegram.telegrambots.meta.api.objects.replykeyboard.ReplyKeyboardMarkup;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;
-import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.KeyboardRow;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 
 import java.util.*;
@@ -78,9 +75,14 @@ public class TelegramBot extends TelegramLongPollingBot {
                 switch (currentStep) {
                     case "pointName":
                         routePoint.setPointName(messageText);
-                        awaitingResponse.put(chatId, "address");
                         sendMessage(chatId, "Вы добавили имя: " + messageText);
-                        sendMessage(chatId, "Введите адрес маршрута");
+                        if (routePoint.getAddress() == null) {
+                            awaitingResponse.put(chatId, "address");
+                            sendMessage(chatId, "Введите адрес маршрута");
+                        } else {
+                            routePointRepository.save(routePoint);
+                            routePoint = new RoutePoint();
+                        }
                         break;
                     case "address":
                         routePoint.setAddress(messageText);
@@ -124,60 +126,81 @@ public class TelegramBot extends TelegramLongPollingBot {
                     break;
             }
         } else if (update.hasCallbackQuery()) {
-            String callback = update.getCallbackQuery().getData();
-            System.out.println(callback);
-            long chatId = update.getCallbackQuery().getMessage().getChatId(); // Получаем chatId из callback запроса
+            String callbackData = update.getCallbackQuery().getData();
+            long chatId = update.getCallbackQuery().getMessage().getChatId();
 
-            switch (callback) {
-                case "addNewPoint":
-                    addPoint(chatId);
-                    deleteMessage(chatId);
-                    break;
-                case "snowRoute":
-                    sendMessage(chatId, "this is dva");
-                    break;
-                case "tri":
-                    sendMessage(chatId, "this is tri");
-                    break;
-                default:
-                    // Действие по умолчанию, если callback не соответствует ни одному из case
-                    break;
+            String[] callbackParts = callbackData.split(";");
+            sendMessage(chatId, "this callback" + callbackParts[0]);
+
+            String action = callbackParts[0];
+            String subAction = (callbackParts.length > 1) ? callbackParts[1] : null;
+            long entityId = (callbackParts.length > 2) ? Long.parseLong(callbackParts[2]) : 0L;
+
+            if (action.equals("routePoint")) {
+                switch (subAction) {
+                    case "snowRoute":
+                        snowPoints(chatId, entityId);
+                        sendMessage(chatId, "this is dva");
+                        break;
+                    case "createPoint":
+                        sendMessage(chatId, "this callBack");
+                        addPoint(chatId);
+                        deleteMessage(chatId);
+                        break;
+                    case "editPointName":
+                        routePoint = routePointRepository.findById(entityId).get();
+                        awaitingResponse.put(chatId, "pointName");
+                        addPoint(chatId);
+                        sendMessage(chatId, "editPoint");
+                        break;
+                    case "editPointAddress":
+                        routePoint = routePointRepository.findById(entityId).get();
+                        awaitingResponse.put(chatId, "address");
+                        sendMessage(chatId, "editPointAddress");
+                        sendMessage(chatId, "Введите адрес маршрута");
+                        break;
+                    case "deletePoint":
+                        routePointRepository.deleteById(entityId);
+                        deleteMessage(chatId);
+                        getPoints(chatId);
+                        break;
+                    default:
+                        break;
+                }
             }
         }
     }
 
+    private void snowPoints(long chatId, long entityId) {
+        RoutePoint point = routePointRepository.findById(entityId).get();
+        InlineKeyboardMarkup keyboardMarkup = new InlineKeyboardMarkup();
+
+        InlineKeyboardButton editNameButton = InlineKeyboardButton.builder()
+                .text("Изменить название")
+                .callbackData("routePoint;editPointName;" + entityId)
+                .build();
+
+        InlineKeyboardButton editAddressButton = InlineKeyboardButton.builder()
+                .text("Изменить адрес")
+                .callbackData("routePoint;editPointAddress;" + entityId)
+                .build();
+
+        InlineKeyboardButton deleteButton = InlineKeyboardButton.builder()
+                .text("Удалить")
+                .callbackData("routePoint;deletePoint;" + entityId)
+                .build();
+
+        keyboardMarkup.setKeyboard(List.of(List.of(editNameButton, editAddressButton), List.of(deleteButton)));
+
+        SendMessage sendMessage = SendMessage.builder()
+                .chatId(chatId)
+                .text(point.getPointName() + "\n" + point.getAddress())
+                .replyMarkup(keyboardMarkup)
+                .build();
+        executeMessage(sendMessage);
+    }
+
     private void addRoute(long chatId) {
-
-        RoutePoint routePoint = new RoutePoint();
-
-        routePointRepository.save(routePoint);
-
-        SendMessage message = new SendMessage(String.valueOf(chatId), "Добавьте маршрут");
-
-        ReplyKeyboardMarkup keyboardMarkup = new ReplyKeyboardMarkup();
-        keyboardMarkup.setSelective(true);
-        keyboardMarkup.setResizeKeyboard(true);
-        keyboardMarkup.setOneTimeKeyboard(true);
-        KeyboardRow keyboardRow = new KeyboardRow();
-        keyboardRow.add("Закончить все маршруты");
-        keyboardMarkup.setKeyboard(List.of(keyboardRow));
-        message.setReplyMarkup(keyboardMarkup);
-
-        InlineKeyboardMarkup inlineKeyboardMarkup = new InlineKeyboardMarkup();
-        List<List<InlineKeyboardButton>> keyboardButtons = new ArrayList<>();
-        List<RouteList> routeList = routeListRepository.findAllByMapLocationNot("dva");
-
-        for (RouteList list : routeList) {
-            InlineKeyboardButton inlineKeyboardButton = new InlineKeyboardButton();
-            inlineKeyboardButton.setText(list.getMapLocation());
-            inlineKeyboardButton.setCallbackData(list.getMapLocation());
-            keyboardButtons.add(List.of(inlineKeyboardButton));
-        }
-
-        inlineKeyboardMarkup.setKeyboard(keyboardButtons);
-        message.setReplyMarkup(inlineKeyboardMarkup);
-
-        executeMessage(message);
     }
 
     private void addPoint(long chatId) {
@@ -193,13 +216,13 @@ public class TelegramBot extends TelegramLongPollingBot {
 
         for (RoutePoint point : routePoints) {
             textList.add(point.getPointName());
-            callBackDataList.add("snowRoute_" + point.getId());
+            callBackDataList.add("routePoint;snowRoute;" + point.getId());
         }
 
         List<List<InlineKeyboardButton>> rows = buildInlineKeyboard(textList, callBackDataList, 2);
         InlineKeyboardMarkup inlineKeyboardMarkup = new InlineKeyboardMarkup();
 
-        rows.add(addButton("Добавить новую точку", "addNewPoint"));
+        rows.add(addInlineButton("Добавить новую точку", "routePoint;createPoint;"));
 
         inlineKeyboardMarkup.setKeyboard(rows);
 
@@ -259,12 +282,19 @@ public class TelegramBot extends TelegramLongPollingBot {
         return rows;
     }
 
-    private List<InlineKeyboardButton> addButton(String text, String callBackData) {
+    private List<InlineKeyboardButton> addInlineButton(String text, String callBackData) {
         List<InlineKeyboardButton> addRow = new ArrayList<>();
         InlineKeyboardButton addButton = new InlineKeyboardButton();
         addButton.setText(text);
         addButton.setCallbackData(callBackData);
         addRow.add(addButton);
         return addRow;
+    }
+
+    private InlineKeyboardButton addInlineButton1(String text, String callBackData) {
+        return InlineKeyboardButton.builder()
+                .text(text)
+                .callbackData(callBackData)
+                .build();
     }
 }
