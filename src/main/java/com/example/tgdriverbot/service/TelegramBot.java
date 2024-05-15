@@ -1,13 +1,13 @@
 package com.example.tgdriverbot.service;
 
 import com.example.tgdriverbot.config.BotConfig;
-import com.example.tgdriverbot.model.RoutePoint;
 import com.example.tgdriverbot.repository.DailyRouteRepository;
 import com.example.tgdriverbot.repository.RouteListRepository;
 import com.example.tgdriverbot.repository.RoutePointRepository;
-import com.example.tgdriverbot.repository.UserRepository;
-import com.example.tgdriverbot.service.routePointStrategy.RoutePointActionHandler;
-import com.example.tgdriverbot.service.routePointStrategy.RoutePointActionStrategy;
+import com.example.tgdriverbot.service.dbservice.TgUserService;
+import com.example.tgdriverbot.service.strategy.RegistrationStrategy;
+import com.example.tgdriverbot.service.strategy.RoutePointActionHandler;
+import com.example.tgdriverbot.service.strategy.ActionStrategy;
 import lombok.Getter;
 import lombok.Setter;
 import org.springframework.stereotype.Component;
@@ -15,6 +15,7 @@ import org.telegram.telegrambots.bots.TelegramLongPollingBot;
 import org.telegram.telegrambots.meta.api.methods.commands.SetMyCommands;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.methods.updatingmessages.DeleteMessage;
+import org.telegram.telegrambots.meta.api.methods.updatingmessages.EditMessageText;
 import org.telegram.telegrambots.meta.api.objects.Message;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.api.objects.commands.BotCommand;
@@ -30,7 +31,7 @@ import java.util.*;
 @Component
 public class TelegramBot extends TelegramLongPollingBot {
 
-    private final UserRepository userRepository;
+    private final TgUserService tgUserService;
     private final DailyRouteRepository dailyRouteRepository;
     private final RoutePointRepository routePointRepository;
     private final RouteListRepository routeListRepository;
@@ -38,8 +39,8 @@ public class TelegramBot extends TelegramLongPollingBot {
     private final BotConfig config;
 
 
-    public TelegramBot(UserRepository userRepository, DailyRouteRepository dailyRouteRepository, RoutePointRepository routePointRepository, RouteListRepository routeListRepository, BotConfig config) {
-        this.userRepository = userRepository;
+    public TelegramBot(TgUserService tgUserService, DailyRouteRepository dailyRouteRepository, RoutePointRepository routePointRepository, RouteListRepository routeListRepository, BotConfig config) {
+        this.tgUserService = tgUserService;
         this.dailyRouteRepository = dailyRouteRepository;
         this.routePointRepository = routePointRepository;
         this.routeListRepository = routeListRepository;
@@ -70,10 +71,9 @@ public class TelegramBot extends TelegramLongPollingBot {
 
     private static final int MAX_STACK_SIZE = 10;
     private List<Integer> lastMessageIdList = new ArrayList<>();
+    private int userMessageId;
 
-    private RoutePointActionStrategy routePointActionStrategy;
-    private Map<Long, String> awaitingResponse = new HashMap<>();
-    private RoutePoint routePoint = new RoutePoint();
+    private ActionStrategy actionStrategy;
 
     @Override
     public void onUpdateReceived(Update update) {
@@ -84,13 +84,15 @@ public class TelegramBot extends TelegramLongPollingBot {
 
             switch (messageText) {
                 case "/start":
+                    actionStrategy = new RegistrationStrategy(tgUserService);
+                    actionStrategy.execute(update, this, chatId);
                     //startCommandReceived(chatId, update.getMessage().getChat().getFirstName());
                     break;
                 case "/addroute":
                     break;
                 case "/points":
-                    routePointActionStrategy = new RoutePointActionHandler();
-                    routePointActionStrategy.execute(update, this, chatId);
+                    actionStrategy = new RoutePointActionHandler(tgUserService);
+                    actionStrategy.execute(update, this, chatId);
                     break;
                 case "/enddailyroute":
                     break;
@@ -102,17 +104,14 @@ public class TelegramBot extends TelegramLongPollingBot {
                     break;
             }
 
-        } else if (routePointActionStrategy != null) {
+        } else if (actionStrategy != null) {
             long chatId = -1;
             if (update.hasMessage()) {
                 chatId = update.getMessage().getChatId();
             } else if (update.hasCallbackQuery()) {
                 chatId = update.getCallbackQuery().getMessage().getChatId();
             }
-            routePointActionStrategy.execute(update, this, chatId);
-
-        } else if (update.hasCallbackQuery()) {
-            System.out.println(update.getCallbackQuery().getData());
+            actionStrategy.execute(update, this, chatId);
         }
     }
 
@@ -129,14 +128,45 @@ public class TelegramBot extends TelegramLongPollingBot {
         }
     }
 
+    public void editMessage(SendMessage sendMessage, int countMessageForEdit) {
+        EditMessageText editMessageText = new EditMessageText();
+        editMessageText.setChatId(sendMessage.getChatId());
+        if (lastMessageIdList.size() > countMessageForEdit) {
+            int lastMessageId = lastMessageIdList.get(lastMessageIdList.size() - 1 - countMessageForEdit);
+            editMessageText.setMessageId(lastMessageId);
+        }
+        editMessageText.setText(sendMessage.getText());
+        lastMessageIdList.add(editMessageText.getMessageId());
+
+        if (sendMessage.getReplyMarkup() != null) {
+            editMessageText.setReplyMarkup((InlineKeyboardMarkup) sendMessage.getReplyMarkup());
+            System.out.println("KLAVA ESTb");
+        }
+
+        try {
+            execute(editMessageText);
+        } catch (TelegramApiException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
     public void deleteMessage(long chatId, int countMessageForDelete) {
         DeleteMessage deleteMessage = null;
         if (lastMessageIdList.size() >= countMessageForDelete) {
             int sizeList = lastMessageIdList.size() - 1;
             deleteMessage = new DeleteMessage(String.valueOf(chatId), lastMessageIdList.remove(sizeList - countMessageForDelete));
         }
+
         try {
             execute(deleteMessage);
+        } catch (TelegramApiException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    public void deleteLastUserMessage(long chatId) {
+        try {
+            execute(DeleteMessage.builder().chatId(chatId).messageId(userMessageId).build());
         } catch (TelegramApiException e) {
             throw new RuntimeException(e);
         }

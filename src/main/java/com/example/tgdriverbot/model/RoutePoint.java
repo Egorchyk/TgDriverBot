@@ -2,11 +2,12 @@ package com.example.tgdriverbot.model;
 
 import jakarta.persistence.*;
 import jakarta.validation.constraints.NotEmpty;
-import jakarta.validation.constraints.NotNull;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+
+import java.util.Objects;
 
 @Entity
 @AllArgsConstructor
@@ -26,4 +27,13 @@ public class RoutePoint {
 
     @ManyToOne
     private DailyRoute dailyRoute;
+
+    @ManyToOne
+    private TgUser tgUser;
+
+    @Override
+    public String toString() {
+        return "\n\nИмя:\n" + pointName +
+                "\n\nАдрес:\n" + Objects.requireNonNullElse(address, "отсутствует");
+    }
 }

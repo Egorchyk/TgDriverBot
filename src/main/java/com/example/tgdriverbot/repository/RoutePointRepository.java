@@ -1,11 +1,12 @@
-package com.example.tgdriverbot.repository;//package com.example.driverbot.repository;
+package com.example.tgdriverbot.repository;
 
 import com.example.tgdriverbot.model.RoutePoint;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
+
 @Repository
 public interface RoutePointRepository extends JpaRepository<RoutePoint, Long> {
-    @Override
-    void deleteById(Long routePointId);
+    List<RoutePoint> findAllByTgUser_ChatId(Long userId);
 }

@@ -19,7 +19,9 @@ public class TgUser {
 
     @Id
     private Long chatId;
-    private String username;
+    private String firstName;
+    private String lastName;
+    private String userName;
 
     @OneToMany
     private List<RouteList> routeLists;
@@ -29,4 +31,5 @@ public class TgUser {
 
     @OneToMany
     private List<DailyRoute> dailyRoutes;
+
 }
